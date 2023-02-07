@@ -1,0 +1,150 @@
+Select *
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+
+--Check distinct values in the field
+
+Select distinct STATUS 
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+
+Select distinct YEAR_ID
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+
+Select distinct PRODUCTLINE
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+
+Select distinct COUNTRY
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+
+Select distinct DEALSIZE
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+
+
+--ANALYSIS
+
+-- Grouping sales by product line
+
+Select PRODUCTLINE, sum (Sales) as Revenue
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+Group by PRODUCTLINE
+Order by Revenue DESC
+
+
+
+-- Grouping sales by year
+
+Select YEAR_ID, sum (Sales) as Revenue
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+Group by YEAR_ID
+Order by Revenue DESC -- 2005 showing very low sales.
+
+--Do we have full year data for 2005?
+
+Select MONTH_ID, YEAR_ID
+From SalesDataPortfolio.[dbo].[sample_sales_data$]
+Where YEAR_ID = '2005'
+Group by MONTH_ID, YEAR_ID
+
+--OR
+
+Select distinct MONTH_ID
+From SalesDataPortfolio.dbo.sample_sales_data$
+Where YEAR_ID = '2005'
+
+
+
+--Sales by deal size
+
+Select DEALSIZE, sum (Sales) as Revenue
+From SalesDataPortfolio.dbo.sample_sales_data$
+Group by DEALSIZE
+Order by Revenue Desc
+
+
+
+-- what was the best month of sales for each year
+
+Select MONTH_ID, YEAR_ID, sum(SALES) as Revenue, count (distinct ORDERNUMBER) AS OrdersReceived
+From SalesDataPortfolio.dbo.sample_sales_data$
+Group by MONTH_ID, YEAR_ID
+Order by YEAR_ID, MONTH_ID
+
+--tallying if the count of orders received is correct
+
+Select distinct ORDERNUMBER
+From SalesDataPortfolio.dbo.sample_sales_data$
+Where YEAR_ID = '2003' AND MONTH_ID = '1'
+
+
+--Which products they sell the most in best months (which we saw was Nov 2003-4 from previous query)
+
+Select PRODUCTLINE, sum(SALES) AS Revenue,  count (distinct ORDERNUMBER) AS OrdersReceived, YEAR_ID
+From SalesDataPortfolio.dbo.sample_sales_data$
+Where MONTH_ID = '11'
+Group by PRODUCTLINE, YEAR_ID
+Order by YEAR_ID 
+
+--altering order date data type since it is showing as nvarchar 
+
+Alter table SalesDataPortfolio.dbo.sample_sales_data$
+Alter Column ORDERDATE date;
+
+--Classifying customers using RFM analysis
+---creating rfm index
+
+DROP TABLE IF EXISTS rfmtable
+
+With RFM as 
+
+(
+	Select
+	CUSTOMERNAME,
+	sum(SALES) as MonetarySpend,
+	count (ORDERNUMBER) as Frequency,
+	max(ORDERDATE) as RecentOrder,
+	(Select max(ORDERDATE) From SalesDataPortfolio.dbo.sample_sales_data$) AS LastOrderdate,
+	DATEDIFF(dd, max(ORDERDATE) , (Select max(ORDERDATE) From SalesDataPortfolio.dbo.sample_sales_data$)) as Recency --how many days ago the customer placed the last order
+
+	From SalesDataPortfolio.dbo.sample_sales_data$
+	Group by CUSTOMERNAME
+	
+	),
+
+rfm_index as
+
+(
+	 select r.*,
+	 NTILE(3) OVER (order by Recency desc) as rfm_recency, -- 1 being poor and 3 being best
+	 NTILE(3) OVER (order by Frequency) as rfm_frequency,
+	 NTILE(3) OVER (order by MonetarySpend) as rfm_monetary
+
+	 from rfm as r 
+)
+
+
+select ri.* ,
+rfm_recency + rfm_frequency + rfm_monetary as rfmtotal,
+cast(rfm_recency as varchar) + cast(rfm_frequency as varchar) + cast(rfm_monetary as varchar) as rfmstring
+
+into rfmtable
+from rfm_index as ri
+
+
+select *
+from rfmtable
+ 
+
+ --- classifying customers according to their rfm indexes
+
+ select CUSTOMERNAME, rfm_frequency, rfm_monetary, rfm_recency, rfmstring,
+ case
+	when rfmstring in (133) then 'highspend-new'
+	when rfmstring in (232, 331, 332) then 'highspend-nourish'
+	when rfmstring in (111, 211, 311, 121, 131, 321, 221, 231) then 'inactive'
+	when rfmstring in (113) then 'lowspend-new'
+	when rfmstring in (112, 312, 212, 213, 313) then 'lowspend-nourish'
+	when rfmstring in (333, 323, 233) then 'loyal'
+	when rfmstring in (123) then 'midspend-new'
+	when rfmstring in (222, 322, 223, 122, 132) then 'midspend-nourish'
+end customercategory
+ From rfmtable
+ Order by CUSTOMERNAME
